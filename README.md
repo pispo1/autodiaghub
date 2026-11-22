@@ -26,7 +26,7 @@ Open `http://127.0.0.1:8000/` on the same computer. Run `node --test` from the r
 
 ### Publish to GitHub Pages
 
-1. In the repository's Pages settings, set **Build and deployment → Source** to **GitHub Actions**. [AutoDiagHub Pages settings](https://github.com/pispo1/autodiaghub/settings/pages) · [GitHub Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+1. In the repository's Pages settings, set **Build and deployment → Source** to **GitHub Actions**. With **Deploy from a branch** and **/(root)** selected, GitHub publishes the repository root and the app is served at `/autodiaghub/dist/`. [AutoDiagHub Pages settings](https://github.com/pispo1/autodiaghub/settings/pages) · [GitHub Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 2. Commit the app in `dist/` and the [deployment workflow](.github/workflows/pages.yml), then push to `main`. The workflow publishes the contents of `dist/` on each push to `main` after Pages is configured.
 3. Once the deployment succeeds, open the project URL in Bluefy. [GitHub Actions runs](https://github.com/pispo1/autodiaghub/actions) · [AutoDiagHub on GitHub Pages](https://pispo1.github.io/autodiaghub/)
 
