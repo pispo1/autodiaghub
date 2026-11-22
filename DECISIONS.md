@@ -26,15 +26,15 @@ Stethos inspired the project and documents a Bluefy-to-BLE adapter workflow that
 
 ## D-005. Use PSA-RE as the PSA message reference
 
-**Status** · Reference identified. The vehicle variant and adapter coverage are pending.
+**Status** · Full PSA-RE vehicle catalog bundled. Live scan routes cover four C4 Picasso profiles. Hardware validation is pending.
 
-Use PSA-RE to map the vehicle variant to its network and ECU definitions. Start with the entries relevant to the first PSA-specific read once that operation is selected. [PSA-RE repository](https://github.com/prototux/PSA-RE)
+Use pinned PSA-RE data for vehicle and ECU browsing offline. Enable live scans for profiles with bundled diagnostic routes. Scans use documented identification requests. [Pinned PSA-RE revision](https://github.com/prototux/PSA-RE/tree/67f7581e7622410efdbb29c7eda3b86982b9b450)
 
 ## D-006. Require confirmation for per-ECU DTC clearing
 
-**Status** · Planned feature. Coverage depends on ECU and adapter verification.
+**Status** · Implemented for documented UDS and PSA KWP targets. Hardware verification is pending.
 
-Keep discovery and reads independent of clearing. The clear action names the detected ECU and states the scope of the operation. Reread its DTCs after the operation to verify the outcome.
+Keep discovery and reads independent of clearing. The clear action names the detected ECU and states the scope of the operation. Confirm the target with a fresh read, send one clear request, and reread its DTCs. Report missing acknowledgement or follow-up data as an uncertain outcome.
 
 ## Open decisions
 

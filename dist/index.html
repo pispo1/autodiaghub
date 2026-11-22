@@ -11,7 +11,10 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">AD</span> AutoDiagHub</div>
-    <span id="offline" class="offline" role="status">Checking offline availability…</span>
+    <div class="cache-controls">
+      <span id="offline" class="offline" role="status">Checking offline availability…</span>
+      <button id="refresh-app" type="button" disabled>Refresh app</button>
+    </div>
   </header>
   <main>
     <section class="connection" aria-labelledby="connection-title">
@@ -36,21 +39,160 @@
         <h2 id="health-title">ELM327 Health</h2>
         <p id="health-status" class="read-status" role="status">Connect an adapter to check its health.</p>
         <dl>
-          <div><dt>Reported firmware</dt><dd id="firmware">—</dd></div>
+          <div><dt>Reported firmware version</dt><dd id="firmware">—</dd></div>
+          <div><dt>Adapter identification</dt><dd id="adapter-id">—</dd></div>
           <div><dt>Adapter supply voltage</dt><dd id="voltage">—</dd></div>
           <div><dt>Vehicle communication</dt><dd id="vehicle">Not checked</dd></div>
           <div><dt>Active OBD protocol</dt><dd id="protocol">—</dd></div>
+          <div><dt>OBD-II PID $00 reply</dt><dd id="vehicle-reply">—</dd></div>
         </dl>
-        <button id="health" type="button" disabled>Check adapter</button>
+        <button id="health" type="button" disabled>Check adapter and vehicle</button>
       </section>
       <section class="panel" aria-labelledby="obd-title">
         <h2 id="obd-title">General OBD-II</h2>
-        <div class="mode"><code>$03</code> Stored trouble codes</div>
+        <div class="field">
+          <label for="obd-mode">Service mode</label>
+          <select id="obd-mode" aria-describedby="mode-description"></select>
+          <p id="mode-description"></p>
+        </div>
+        <div class="mode-fields" id="mode-fields" hidden>
+          <div class="field">
+            <label for="obd-identifier" id="identifier-label">Identifier (hex)</label>
+            <input id="obd-identifier" type="text" maxlength="2" autocapitalize="characters" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field" id="frame-field" hidden>
+            <label for="obd-frame">Freeze frame (hex)</label>
+            <input id="obd-frame" type="text" value="00" maxlength="2" autocapitalize="characters" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field" id="sensor-field" hidden>
+            <label for="obd-sensor">Oxygen sensor slot</label>
+            <select id="obd-sensor"></select>
+          </div>
+        </div>
+        <div class="field" id="supported-field" hidden>
+          <label for="obd-supported">Reported supported identifiers</label>
+          <select id="obd-supported"></select>
+        </div>
+        <div class="actions">
+          <button id="scan" class="primary" type="button" disabled>Read stored codes</button>
+          <button id="discover" type="button" hidden disabled>Find supported IDs</button>
+        </div>
         <p id="scan-status" class="read-status" role="status">Connect an adapter to read codes.</p>
-        <ul id="codes" aria-label="Stored trouble codes" hidden></ul>
-        <button id="scan" class="primary" type="button" disabled>Read stored codes</button>
+        <ul class="trouble-codes" id="codes" aria-label="Trouble codes" hidden></ul>
+        <dl id="obd-values" hidden></dl>
+        <div class="actions" id="save-actions" hidden>
+          <button id="save-reading" type="button">Save reading</button>
+        </div>
+        <p id="save-status" class="read-status" role="status"></p>
       </section>
     </div>
+    <details class="panel reading-history" id="psa-section">
+      <summary>PSA Diagnostics</summary>
+      <p id="psa-source-status" class="read-status" role="status">Open to browse the offline PSA-RE vehicle catalog.</p>
+      <div id="psa-controls" class="psa-controls" hidden>
+        <div class="field">
+          <label for="psa-vehicle-search">Find a vehicle</label>
+          <input id="psa-vehicle-search" type="search" autocomplete="off" placeholder="Make, model, or project code">
+          <p id="psa-vehicle-matches" class="read-status" role="status"></p>
+        </div>
+        <div class="history-controls">
+          <div class="field">
+            <label for="psa-vehicle">Vehicle</label>
+            <select id="psa-vehicle"></select>
+          </div>
+          <div class="field">
+            <label for="psa-variant">Variant</label>
+            <select id="psa-variant"></select>
+          </div>
+        </div>
+        <p id="psa-aliases" class="read-status"></p>
+        <div id="psa-vehicle-data" class="psa-controls" hidden>
+          <p id="psa-profile"></p>
+          <div class="actions"><button id="psa-scan" class="primary" type="button" disabled>Scan ECUs</button></div>
+          <p id="psa-status" class="read-status" role="status"></p>
+          <details id="psa-ecu-catalog">
+            <summary>ECU catalog and scan results</summary>
+            <dl id="psa-ecu-list"></dl>
+          </details>
+          <p id="psa-empty-catalog" class="read-status" hidden>PSA-RE has no ECU inventory for this variant.</p>
+          <div class="history-controls" id="psa-ecu-selection">
+            <div class="field">
+              <label for="psa-ecu">Control unit</label>
+              <select id="psa-ecu"></select>
+            </div>
+            <div class="field" id="psa-model-field" hidden>
+              <label for="psa-model">ECU model</label>
+              <select id="psa-model"></select>
+            </div>
+          </div>
+          <p id="psa-ecu-info"></p>
+          <dl id="psa-identification" hidden></dl>
+          <div id="psa-read" class="psa-controls" hidden>
+              <fieldset id="psa-parameter-field">
+                <legend>ECU parameters</legend>
+                <div class="field">
+                  <label for="psa-parameter-search">Search by name or ID</label>
+                  <input id="psa-parameter-search" type="search" autocomplete="off">
+                </div>
+                <p id="psa-parameter-count" role="status"></p>
+                <div id="psa-parameters" class="parameter-list"></div>
+              </fieldset>
+            <div class="actions">
+                <button id="psa-read-parameter" type="button" disabled>Read selected parameters</button>
+                <button id="psa-read-dtcs" type="button" disabled>Read ECU DTCs</button>
+                <button id="psa-clear-dtcs" type="button" hidden disabled>Clear ECU DTCs</button>
+            </div>
+              <div id="psa-clear-confirmation" class="psa-controls" hidden>
+                <p id="psa-clear-target"></p>
+                <p>This clears all fault codes in the selected ECU and may erase its freeze-frame data.</p>
+                <div class="actions">
+                  <button id="psa-cancel-clear" type="button">Cancel</button>
+                  <button id="psa-confirm-clear" type="button">Clear this ECU’s codes</button>
+                </div>
+              </div>
+              <p id="psa-read-status" class="read-status" role="status"></p>
+            <dl id="psa-values" hidden></dl>
+              <div class="actions" id="psa-save-actions" hidden>
+                <button id="psa-save" type="button">Save ECU snapshot</button>
+              </div>
+              <p id="psa-save-status" class="read-status" role="status"></p>
+          </div>
+        </div>
+        <p class="source-links"><a id="psa-upstream" href="https://github.com/prototux/PSA-RE">PSA-RE source</a> ·
+          <a href="./psa/NOTICE.txt">Attribution</a> · <a href="./psa/LICENSE.txt">License</a></p>
+      </div>
+    </details>
+    <details class="panel reading-history" id="reading-history">
+      <summary>Saved readings</summary>
+      <p id="history-status" class="read-status" role="status"></p>
+      <div class="history-controls" id="history-controls" hidden>
+        <div class="field">
+          <label for="history-mode">Filter by mode</label>
+          <select id="history-mode"><option value="">All modes</option></select>
+        </div>
+        <div class="field">
+          <label for="history-reading">Saved reading</label>
+          <select id="history-reading"></select>
+        </div>
+      </div>
+      <div id="history-result" hidden>
+        <p id="history-meta"></p>
+        <ul class="trouble-codes" id="history-codes" aria-label="Saved trouble codes" hidden></ul>
+        <dl id="history-values" hidden></dl>
+        <figure id="history-trend" hidden>
+          <figcaption id="trend-label"></figcaption>
+          <canvas id="trend-canvas" width="840" height="220" aria-hidden="true"></canvas>
+          <details>
+            <summary>View trend values</summary>
+            <table>
+              <thead><tr><th scope="col">Read at</th><th scope="col" id="trend-unit">Value</th></tr></thead>
+              <tbody id="trend-values"></tbody>
+            </table>
+          </details>
+        </figure>
+        <button id="delete-reading" type="button">Delete reading</button>
+      </div>
+    </details>
   </main>
 </body>
 </html>

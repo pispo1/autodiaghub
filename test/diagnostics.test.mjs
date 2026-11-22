@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chooseAdapter, openAdapter } from '../dist/ble.mjs';
-import { decodeMode03, readAdapterHealth, readStoredCodes } from '../dist/obd.mjs';
+import { decodeMode03, readAdapterHealth, readVehicleHealth } from '../dist/obd.mjs';
+import { readGeneralOBD } from '../dist/modes.mjs';
 
 test('decodes legacy, CAN, multiline CAN, and empty replies', () => {
   assert.deepEqual(decodeMode03('03\r43 01 33 00 00 00 00', '3'), ['P0133']);
@@ -66,20 +67,52 @@ test('reads health and stored codes through a mock GATT channel with fragmented 
     ...settings,
     ATI: ['ATI\rELM', '327 v1.5\r', '>'],
     ATRV: ['ATRV\r12.6V\r>'],
+    '0100': ['SEARCHING...\r41 00 80 10 00 01\r41 00 08 00 00 00\r>'],
     '03': ['SEARCHING...\r43 01 ', '01 33\r>'],
     ATDPN: ['A6\r>'],
     ATDP: ['AUTO, ISO 15765-4 (CAN 11/500)\r>'],
   });
   const session = await mock.session;
   try {
-    assert.deepEqual(await readAdapterHealth(session), { firmware: 'ELM327 V1.5', voltage: '12.6V' });
-    assert.deepEqual(await readStoredCodes(session), {
+    assert.deepEqual(await readAdapterHealth(session), {
+      version: '1.5', identification: 'ELM327 V1.5', voltage: '12.6 V',
+    });
+    assert.deepEqual(await readVehicleHealth(session), {
+      protocol: { number: '6', code: 'A6', description: 'AUTO, ISO 15765-4 (CAN 11/500)' },
+      replies: ['41 00 80 10 00 01', '41 00 08 00 00 00'],
+    });
+    assert.deepEqual(await readGeneralOBD(session, { modeId: '03' }), {
       codes: ['P0133'], protocol: 'AUTO, ISO 15765-4 (CAN 11/500)',
     });
-    assert.deepEqual(mock.commands, ['ATI', 'ATRV', ...setup, '03', 'ATDPN', 'ATDP']);
+    assert.deepEqual(mock.commands, ['ATI', 'ATRV', ...setup, '0100', 'ATDPN', 'ATDP',
+      ...setup, '03', 'ATDPN', 'ATDP']);
   } finally {
     session.close();
   }
+});
+
+test('shows reported values and keeps a test acknowledgement separate from a firmware version', async () => {
+  const replies = { ATI: 'ATI\rTEST OK', ATRV: 'ATRV\rOK\r12,8 v' };
+  const adapter = { async command(command) { return replies[command]; } };
+  assert.deepEqual(await readAdapterHealth(adapter), { version: null, identification: 'TEST OK', voltage: '12.8 V' });
+  replies.ATI = 'ATI\rOK\rSTN1110 v4.2.3';
+  replies.ATRV = 'TEST OK';
+  assert.deepEqual(await readAdapterHealth(adapter), {
+    version: '4.2.3', identification: 'STN1110 V4.2.3', voltage: null,
+  });
+});
+
+test('reports an unconfirmed or invalid vehicle connection reply instead of a success', async () => {
+  const reply = { '0100': 'NO DATA', ATDPN: 'A6', ATDP: 'TEST OK' };
+  const adapter = { async command(command) { return reply[command] ?? 'OK'; } };
+  await assert.rejects(readVehicleHealth(adapter), { kind: 'unconfirmed' });
+  reply['0100'] = '41 01 00 00 00 00';
+  await assert.rejects(readVehicleHealth(adapter), /invalid PID/);
+  reply['0100'] = '41 00 00 00 00 00';
+  assert.deepEqual(await readVehicleHealth(adapter), {
+    protocol: { number: '6', code: 'A6', description: 'Protocol A6' },
+    replies: ['41 00 00 00 00 00'],
+  });
 });
 
 test('rejects an in-flight command on disconnection and after a timeout', async () => {

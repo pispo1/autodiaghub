@@ -1,12 +1,28 @@
-const cacheName = 'autodiaghub-shell-v1';
-const assetPaths = ['index.html', 'style.css', 'app.mjs', 'ble.mjs', 'obd.mjs'];
+const cacheName = 'autodiaghub-shell-v9';
+const assetPaths = [
+  'index.html', 'style.css', 'app.mjs', 'ble.mjs', 'obd.mjs', 'modes.mjs', 'history.mjs',
+  'psa.mjs', 'psa-view.mjs', 'psa/catalog.json', 'psa/NOTICE.txt', 'psa/LICENSE.txt',
+];
 const scope = new URL(self.registration.scope);
 const assets = new Set(assetPaths.map((path) => new URL(path, scope).href));
 const index = new URL('index.html', scope).href;
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(cacheName).then((cache) =>
-    cache.addAll([...assets].map((asset) => new Request(asset, { cache: 'reload' })))));
+async function cacheAppFiles() {
+  const cache = await caches.open(cacheName);
+  await cache.addAll([...assets].map((asset) => new Request(asset, { cache: 'reload' })));
+}
+
+self.addEventListener('install', (event) => event.waitUntil(cacheAppFiles()));
+
+self.addEventListener('message', (event) => {
+  if (event.data === 'activate-update') event.waitUntil(self.skipWaiting());
+  if (event.data === 'refresh-files' && event.ports[0]) {
+    const port = event.ports[0];
+    event.waitUntil(cacheAppFiles().then(
+      () => port.postMessage({ ok: true }),
+      () => port.postMessage({ ok: false }),
+    ));
+  }
 });
 
 self.addEventListener('activate', (event) => {

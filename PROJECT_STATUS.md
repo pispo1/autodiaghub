@@ -1,6 +1,6 @@
 # Project status
 
-**Current phase** · First implementation. ELM327 Health and the generic stored-code read passed synthetic tests. Chrome reopened the cached app and repeated a scan with simulated Bluetooth while offline. Device testing in Bluefy is pending.
+**Current phase** · ELM327 Health, General OBD-II, and PSA Diagnostics are implemented. Synthetic tests cover scan outcomes, parameter decoding, and UDS and PSA KWP trouble-code reads and clears. Device testing in Bluefy is pending.
 
 ## Remaining work
 
@@ -8,15 +8,22 @@
 - [ ] Verify that a minimal HTTPS page can connect to the adapter from Bluefy. Confirm the adapter's GATT service and its command and response characteristics.
 - [ ] Verify that the same page can be closed and reopened in Bluefy with Wi-Fi and cellular data disabled and Bluetooth still enabled after initial setup.
 - [x] Implement ELM327 Health and the first generic stored-code read. Exercise both with synthetic replies.
+- [x] Display the reported firmware number, supply voltage, protocol code, and actual PID `$00` response in the health check.
 - [ ] Run a read on the parked C4 Picasso, repeat it offline, and document the setup and testing results in the [README](README.md).
 
 ## General OBD-II and PSA diagnostics
 
-- [ ] Expand General OBD-II to show mode descriptions, support status, and returned data by service.
-- [ ] Bundle the PSA-RE vehicle list and match the C4 Picasso's generation, model year, and engine to its catalog variant. [PSA-RE vehicle list](https://github.com/prototux/PSA-RE/tree/master/cars)
-- [ ] Scan the selected variant's expected ECUs and check what the adapter can reach through the OBD-II port.
-- [ ] Implement parameter and DTC reads for detected ECUs with verified definitions.
-- [ ] Implement confirmed, per-ECU DTC clearing for supported targets and verify the outcome with a follow-up read.
+- [x] Expand General OBD-II to show mode descriptions, support status, and returned data by service.
+- [x] Save selected General OBD-II readings locally and review them offline, with trends for comparable live readings.
+- [x] Bundle four C4 Picasso profiles and their matched diagnostic definitions from a pinned PSA-RE revision.
+- [x] Include all 155 variants from the pinned PSA-RE vehicle catalog and label live scan coverage in the offline picker.
+- [x] Implement ECU scanning for documented diagnostic routes, parameter reads, and active or confirmed UDS DTC reads.
+- [x] Add searchable ECU parameters, batch reads, readable UDS status flags, and locally saved ECU snapshots.
+- [x] Restore the selected vehicle and variant from browser storage.
+- [x] Implement and simulate documented per-ECU DTC reads and confirmed clearing for UDS and PSA KWP.
+- [ ] Match the target C4 Picasso to a bundled profile and verify its ECU reachability and read results in Bluefy.
+- [ ] Verify which UDS ECU models support fault freeze-frame reads and how their records are decoded.
+- [ ] Verify per-ECU DTC reads, clear acknowledgements, and follow-up results on the target vehicle.
 
 ## Prototype acceptance criteria
 

@@ -16,21 +16,24 @@ flowchart LR
 
 ## ELM327 Health
 
-Check BLE connectivity and adapter command response separately from communication with the vehicle. Show the adapter's reported identity and firmware version, its voltage reading when available, and the selected vehicle protocol after successful OBD communication. Treat the version string as self-reported and show which checks actually passed. [ELM327 datasheet](https://www.mouser.com/datasheet/2/813/ELM327DS-2489024.pdf)
+Read adapter identification and supply voltage on connection. Extract the reported version from the identification reply and display the reply separately. **Check adapter and vehicle** sends a read-only PID `$00` request and displays the actual reply and active protocol code after successful communication. Missing values are labeled individually. [ELM327 datasheet](https://www.mouser.com/datasheet/2/813/ELM327DS-2489024.pdf)
 
 ## General OBD-II
 
-Start with the stored-code read (mode `$03`). Organize generic diagnostics by service mode and show supported data within each mode. Use supported-PID responses where applicable and otherwise record the outcome of the relevant read. Keep a successful empty result, an explicit unsupported response, and an undetermined result such as a timeout distinct. Track the responding ECU when the adapter exposes it. [ELM327 datasheet](https://www.mouser.com/datasheet/2/813/ELM327DS-2489024.pdf)
+The mode selector lists `$01` through `$0A`. Reads are on demand. For parameterized services, discovery follows the support ranges advertised by the vehicle. A known identifier can also be entered manually. The parser handles CAN and legacy reply formats, decodes common values, and displays unknown encodings as hexadecimal. Adapter headers are off, so generic replies can be listed separately without attributing them to an ECU. Successful empty results, explicit unsupported replies, and unconfirmed or invalid replies have distinct messages. [ELM327 datasheet](https://www.mouser.com/datasheet/2/813/ELM327DS-2489024.pdf) · [SAE J1979](https://www.pgmfi.org/files/sae_obdii_j1979_200204.pdf)
 
 Show descriptions for modes that change vehicle state, including `$04` (clear emissions-related diagnostic information) and `$08` (control of an onboard system or test). Opening the section or checking support only sends read requests. The requested clear action is part of the PSA ECU workflow below. [OBD-II service modes](https://www.snapon.com/DiagnosticsManuals/Help/OBDII/Content/Common/Help%20Topics/OBD/OBDII%20Service%20Modes.htm)
 
+An explicit save stores the result, read time, mode, identifier, applicable frame or sensor, and protocol in local storage. Each reading has its own versioned key so separate tabs can save independently. The offline history plots single-value Mode `$01` readings with matching PID, protocol, and units. Saved readings have no automatic vehicle association.
+
 ## PSA-specific diagnostics
 
-1. Select a vehicle and variant from a bundled PSA-RE catalog. Use the variant to identify candidate ECUs and their documented diagnostic protocols. [PSA-RE repository layout](https://github.com/prototux/PSA-RE#repository-layout)
-2. Scan those candidates using read-only identification requests. Show which ECUs replied and which received no response or could not be reached through the adapter. A catalog entry describes what may be fitted. A reply establishes what was detected in this session.
-3. For a detected ECU, show parameters with their units where defined and read its DTCs. Decode replies using the matching ECU definition.
-4. Offer DTC clearing for an individually selected ECU only when the operation and its scope have been verified for that ECU. Show the target and what data the operation can erase, require confirmation, then reread the codes. If the connection drops or the result cannot be verified, report it as unconfirmed.
+The offline picker includes every vehicle file and variant from the pinned PSA-RE snapshot, with alternate names and project codes. Catalog-only variants include the ECU inventory where documented. Live scan routes are bundled for four C4 Picasso profiles. The generator matches ECU model definitions to each profile's documented diagnostic socket addresses. A sibling architecture record is eligible when the vehicle explicitly lists that model, the record is unique within the architecture family, and its socket addresses match. The service worker caches the catalog and its attribution. [Pinned PSA-RE revision](https://github.com/prototux/PSA-RE/tree/67f7581e7622410efdbb29c7eda3b86982b9b450)
 
-Bundle the vehicle catalog and relevant ECU definitions with the app so vehicle selection, scanning, and supported diagnostics can run offline.
+The scanner uses 11-bit CAN at 500 kbit/s through the diagnostic port. It sends only documented physical identification reads, checks the reply address, and reassembles ISO-TP frames with the adapter's flow control. It deduplicates matching probes. An identification reply establishes that an address responded, so the operator still chooses the ECU model before decoding. The adapter returns to the general OBD-II setup after each PSA operation. [ELM327 datasheet](https://www.mouser.com/datasheet/2/813/ELM327DS-2489024.pdf)
+
+Selected models support documented UDS or KWP-over-CAN parameter reads. A batch uses one ECU route and sends each selected read in sequence. Fields are decoded only when the response length matches the definition. Supported UDS models list active or confirmed DTCs and show the flags reported by the ECU's status-availability mask. Supported PSA KWP models show DTCs with the raw status byte. A confirmed clear first rereads the target ECU, sends a single physically addressed request, and checks the acknowledgement and follow-up DTC list separately. An uncertain result never triggers a retry.
+
+Browser storage retains the selected vehicle and variant and any manually saved snapshots. Each new Bluetooth session starts with fresh ECU scan results. Coverage through the vehicle gateway is pending device validation, as are fault freeze-frame reads.
 
 See the [technical decisions](DECISIONS.md) and the [acceptance criteria](PROJECT_STATUS.md).
