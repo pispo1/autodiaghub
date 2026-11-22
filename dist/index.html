@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#12191d">
+  <title>AutoDiagHub</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">AD</span> AutoDiagHub</div>
+    <span id="offline" class="offline" role="status">Checking offline availability…</span>
+  </header>
+  <main>
+    <section class="connection" aria-labelledby="connection-title">
+      <div>
+        <h1 id="connection-title">Vehicle diagnostics</h1>
+        <p id="connection-status" role="status" data-tone="idle">Adapter disconnected</p>
+      </div>
+      <div class="actions">
+        <button id="connect" class="primary" type="button">Connect adapter</button>
+        <button id="disconnect" type="button" hidden>Disconnect</button>
+      </div>
+      <p id="connection-help">Open in Bluefy on your iPhone. Plug in the BLE adapter and switch on the ignition while parked.</p>
+      <details id="adapter-settings">
+        <summary>Adapter settings</summary>
+        <label for="service">BLE service UUID</label>
+        <input id="service" type="text" placeholder="Automatic when blank" autocapitalize="off" autocomplete="off" spellcheck="false" aria-describedby="uuid-help">
+        <p id="uuid-help">Enter your adapter’s documented service UUID if automatic detection fails.</p>
+      </details>
+    </section>
+    <div class="diagnostics">
+      <section class="panel" aria-labelledby="health-title">
+        <h2 id="health-title">ELM327 Health</h2>
+        <p id="health-status" class="read-status" role="status">Connect an adapter to check its health.</p>
+        <dl>
+          <div><dt>Reported firmware</dt><dd id="firmware">—</dd></div>
+          <div><dt>Adapter supply voltage</dt><dd id="voltage">—</dd></div>
+          <div><dt>Vehicle communication</dt><dd id="vehicle">Not checked</dd></div>
+          <div><dt>Active OBD protocol</dt><dd id="protocol">—</dd></div>
+        </dl>
+        <button id="health" type="button" disabled>Check adapter</button>
+      </section>
+      <section class="panel" aria-labelledby="obd-title">
+        <h2 id="obd-title">General OBD-II</h2>
+        <div class="mode"><code>$03</code> Stored trouble codes</div>
+        <p id="scan-status" class="read-status" role="status">Connect an adapter to read codes.</p>
+        <ul id="codes" aria-label="Stored trouble codes" hidden></ul>
+        <button id="scan" class="primary" type="button" disabled>Read stored codes</button>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

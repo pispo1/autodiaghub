@@ -1,0 +1,30 @@
+const cacheName = 'autodiaghub-shell-v1';
+const assetPaths = ['index.html', 'style.css', 'app.mjs', 'ble.mjs', 'obd.mjs'];
+const scope = new URL(self.registration.scope);
+const assets = new Set(assetPaths.map((path) => new URL(path, scope).href));
+const index = new URL('index.html', scope).href;
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(caches.open(cacheName).then((cache) =>
+    cache.addAll([...assets].map((asset) => new Request(asset, { cache: 'reload' })))));
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) =>
+      key.startsWith('autodiaghub-shell-') && key !== cacheName).map((key) => caches.delete(key)));
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  const address = url.href === scope.href ? index : url.href;
+  if (!assets.has(address)) return;
+  event.respondWith((async () => {
+    const cache = await caches.open(cacheName);
+    return await cache.match(address) || fetch(event.request);
+  })());
+});
