@@ -1,6 +1,6 @@
-const cacheName = 'autodiaghub-shell-v15';
+const cacheName = 'autodiaghub-shell-v16';
 const assetPaths = [
-  'index.html', 'style.css', 'app.mjs', 'ble.mjs', 'obd.mjs', 'modes.mjs', 'history.mjs',
+  'index.html', 'style.css', 'app.mjs', 'ble.mjs', 'obd.mjs', 'modes.mjs', 'history.mjs', 'session-trace.mjs',
   'psa.mjs', 'psa-view.mjs', 'psa/catalog.json', 'psa/NOTICE.txt', 'psa/LICENSE.txt',
 ];
 const scope = new URL(self.registration.scope);

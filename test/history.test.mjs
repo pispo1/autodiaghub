@@ -4,6 +4,7 @@ import {
   compareScans, deleteReading, listReadings, makePsaReading, makePsaScan, makeReading, rawExchangeFile, saveReading,
   scanBaselines, scanSummary, traceSession, trendFor,
 } from '../dist/history.mjs';
+import { createSessionTrace, readSessionTrace, saveSessionTrace, sessionTraceFile, sessionTraceKey } from '../dist/session-trace.mjs';
 
 function memoryStorage() {
   const entries = new Map();
@@ -127,4 +128,22 @@ test('exports saved batch exchanges without changing raw response text or invent
     exchanges: [{ request: '0100', response: raw }, { request: '0101', error: 'Adapter timed out.' }],
   });
   assert.equal(rawExchangeFile(liveReading(100, '1200 rpm')), null);
+});
+
+test('exports the latest session independently of saved readings and rejects older checkpoints', async () => {
+  const storage = memoryStorage();
+  const adapter = traceSession({ async command() { return '41 00 80 00 00 00\r'; } }, { timestamped: true });
+  const trace = createSessionTrace('Test adapter', adapter.exchanges);
+  assert.equal(sessionTraceFile(trace), null);
+  await adapter.command('0100');
+  saveSessionTrace(storage, trace);
+  const old = { ...trace, id: 'other-tab', startedAt: '2000-01-01T00:00:00.000Z' };
+  saveSessionTrace(storage, old);
+  const file = sessionTraceFile(readSessionTrace(storage));
+  assert.match(file.name, /^autodiaghub-session-.*\.json$/);
+  assert.deepEqual(JSON.parse(file.contents), trace);
+  assert.equal(trace.exchanges[0].response, '41 00 80 00 00 00\r');
+  assert.deepEqual(listReadings(storage), []);
+  storage.setItem(sessionTraceKey, '{');
+  assert.equal(readSessionTrace(storage), null);
 });

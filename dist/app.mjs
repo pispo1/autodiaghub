@@ -4,6 +4,7 @@ import { identifierName, modes, readGeneralOBD } from './modes.mjs';
 import { compareScans, deleteReading, listReadings, makeReading, rawExchangeFile, saveReading,
   scanBaselines, scanRows, scanSummary, traceSession, trendFor } from './history.mjs';
 import { mountPsaView, renderPsaExplanations } from './psa-view.mjs';
+import { createSessionTrace, readSessionTrace, saveSessionTrace, sessionTraceFile, sessionTraceKey } from './session-trace.mjs';
 
 const element = (id) => document.getElementById(id);
 const connect = element('connect');
@@ -22,6 +23,7 @@ const sensor = element('obd-sensor');
 const supportedPicker = element('obd-supported');
 const saveButton = element('save-reading');
 const refreshButton = element('refresh-app');
+const sessionDownload = element('session-download');
 const historyMode = element('history-mode');
 const historyEcu = element('history-ecu');
 const historyList = element('history-list');
@@ -53,6 +55,8 @@ let selectedHistoryKey;
 let obdReadTime;
 let psaView;
 let offlineRegistration;
+let latestSessionTrace;
+let traceStorageFailed = false;
 
 function status(id, message, tone = 'idle') {
   const field = element(id);
@@ -76,6 +80,35 @@ function renderReadTime(id, time, label) {
   field.textContent = label + ' · ' + historyDate.format(time);
 }
 
+function renderSessionTrace() {
+  const count = latestSessionTrace?.exchanges.length || 0;
+  element('session-trace').hidden = !count;
+  sessionDownload.disabled = busy || !count;
+  if (!count) return;
+  const label = session ? 'Current session' : 'Last session';
+  status('session-trace-info', [label, historyDate.format(new Date(latestSessionTrace.startedAt)),
+    count + (count === 1 ? ' command' : ' commands'),
+    traceStorageFailed ? 'Available until this page closes' : ''].filter(Boolean).join(' · '));
+}
+
+function restoreSessionTrace() {
+  try {
+    latestSessionTrace = readSessionTrace(localStorage);
+  } catch {
+    latestSessionTrace = null;
+  }
+}
+
+function persistSessionTrace(trace = latestSessionTrace) {
+  if (!trace?.exchanges.length) return;
+  try {
+    saveSessionTrace(localStorage, trace);
+    traceStorageFailed = false;
+  } catch {
+    traceStorageFailed = true;
+  }
+}
+
 function renderControls() {
   connect.hidden = Boolean(session);
   connect.disabled = busy || !canConnect;
@@ -84,6 +117,7 @@ function renderControls() {
   element('vehicle-status').hidden = !session;
   health.disabled = busy || !session;
   refreshButton.disabled = busy || !offlineRegistration;
+  renderSessionTrace();
   const mode = currentMode();
   scan.disabled = busy || !session || mode.infoOnly;
   discover.disabled = busy || !session || !mode.identifier;
@@ -148,7 +182,10 @@ function resetReadings() {
 
 function showDisconnected(endedSession, error) {
   if (session !== endedSession) return;
+  latestSessionTrace.endedAt = new Date().toISOString();
+  latestSessionTrace.endReason = error?.message || 'Disconnected by user';
   session = undefined;
+  persistSessionTrace();
   resetReadings();
   psaView.disconnectSession();
   status('connection-status', error?.message || 'Adapter disconnected', error ? 'error' : 'idle');
@@ -158,24 +195,36 @@ function showDisconnected(endedSession, error) {
 async function runOperation(target, pendingMessage, operation) {
   if (busy || !session) return;
   const active = session;
+  const trace = latestSessionTrace;
+  const entry = {
+    name: pendingMessage.replace(/…$/, ''),
+    startedAt: new Date().toISOString(),
+    firstExchange: trace.exchanges.length,
+  };
+  if (target.startsWith('psa-')) entry.context = psaView.traceContext(target !== 'psa-status');
+  trace.operations.push(entry);
   busy = true;
   renderControls();
   status(target, pendingMessage);
   try {
     await operation(active);
   } catch (error) {
+    entry.error = error?.message ?? String(error);
     if (session === active) {
       const tone = error.kind === 'unsupported' || error.kind === 'unconfirmed' ? 'idle' : 'error';
       status(target, error.message || 'The request failed.', tone);
     }
   } finally {
+    entry.finishedAt = new Date().toISOString();
+    entry.exchangeCount = trace.exchanges.length - entry.firstExchange;
+    persistSessionTrace(trace);
     busy = false;
     renderControls();
   }
 }
 
 async function checkHealth(includeVehicle) {
-  await runOperation('health-status', 'Checking adapter…', async (active) => {
+  await runOperation('health-status', includeVehicle ? 'Checking adapter and vehicle…' : 'Checking adapter…', async (active) => {
     const result = await readAdapterHealth(active);
     if (session !== active) return;
     element('firmware').textContent = result.version || 'Not reported';
@@ -221,8 +270,15 @@ connect.addEventListener('click', async () => {
   try {
     const selected = await chooseAdapter(navigator.bluetooth, service.value.trim());
     status('connection-status', 'Connecting to the adapter…');
-    session = await openAdapter(selected, showDisconnected);
-    status('connection-status', 'Adapter connected · ' + session.name, 'ready');
+    let traced;
+    const adapter = await openAdapter(selected, (_ended, error) => {
+      if (traced) showDisconnected(traced, error);
+    });
+    traced = traceSession(adapter, { timestamped: true });
+    latestSessionTrace = createSessionTrace(adapter.name, traced.exchanges);
+    traceStorageFailed = false;
+    session = traced;
+    status('connection-status', 'Adapter connected · ' + adapter.name, 'ready');
     status('health-status', 'Ready to check the adapter.');
     if (obdReadTime !== undefined) renderReadTime('obd-read-time', obdReadTime, 'Previous connection');
     showScanPrompt();
@@ -241,7 +297,8 @@ connect.addEventListener('click', async () => {
 
 disconnect.addEventListener('click', () => {
   const active = session;
-  active?.close();
+  if (!active) return;
+  active.close();
   showDisconnected(active);
 });
 
@@ -598,6 +655,7 @@ function downloadFile(file) {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
+sessionDownload.addEventListener('click', () => downloadFile(sessionTraceFile(latestSessionTrace)));
 element('history-download').addEventListener('click', () => {
   const reading = savedReadings.find(({ key }) => key === selectedHistoryKey);
   downloadFile(rawExchangeFile(reading));
@@ -622,7 +680,19 @@ element('history-copy').addEventListener('click', async () => {
     status('history-copy-status', 'Use your device’s Copy action on the selected replies.');
   }
 });
-window.addEventListener('storage', () => loadHistory());
+window.addEventListener('storage', ({ key }) => {
+  if (key === sessionTraceKey || key === null) {
+    if (!session) {
+      restoreSessionTrace();
+      renderSessionTrace();
+    }
+    if (key === sessionTraceKey) return;
+  }
+  loadHistory();
+});
+window.addEventListener('pagehide', () => {
+  if (session) persistSessionTrace();
+});
 element('delete-reading').addEventListener('click', () => {
   const key = selectedHistoryKey;
   if (!key || !window.confirm('Delete this saved reading?')) return;
@@ -635,6 +705,7 @@ element('delete-reading').addEventListener('click', () => {
   loadHistory();
 });
 loadHistory();
+restoreSessionTrace();
 psaView = mountPsaView({ element, status, renderValues, runOperation, persistReading, downloadFile, reportVehicleReply, renderReadTime });
 
 if (!canConnect) {

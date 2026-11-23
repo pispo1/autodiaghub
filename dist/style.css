@@ -23,6 +23,7 @@ main { padding-block: clamp(1.5rem, 5vw, 3.5rem); }
 .connection, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: .85rem; padding: clamp(1rem, 4vw, 1.6rem); }
 .connection { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: .75rem 1rem; margin-bottom: 1rem; }
 .connection > p, .connection > details { grid-column: 1 / -1; }
+#session-trace { grid-column: 1 / -1; align-items: center; }
 .actions { display: flex; flex-wrap: wrap; gap: .6rem; }
 h1, h2, p, dl { margin: 0; }
 h1 { font-size: clamp(1.5rem, 5vw, 2.35rem); letter-spacing: -.035em; line-height: 1.15; }

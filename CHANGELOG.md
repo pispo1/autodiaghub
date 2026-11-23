@@ -19,6 +19,7 @@
 - Tappable PSA scan results, progress and stop controls, optional fault-code reads, and offline scan reports with raw exports and comparisons.
 - ECU identification reads and expandable explanations of PSA responses in live and saved readings.
 - Sticky parameter controls, connection-aware reading timestamps, ECU scan filters and retry, and date-grouped history with raw reply copying.
+- Session-wide JSON downloads with timestamped commands, responses, and errors across all diagnostic screens.
 
 ### Changed
 

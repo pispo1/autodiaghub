@@ -14,6 +14,8 @@ AutoDiagHub is a planned offline-first web app for vehicle diagnostics using an 
 
 The static app in `dist/` implements ELM327 Health, General OBD-II, and PSA Diagnostics with per-ECU trouble-code reads and confirmed clearing on supported models.
 
+Use **Download session trace** in the connection panel to export the current or most recent adapter session as JSON. It includes all adapter command attempts and replies, errors and any received partial reply, timestamps, and the operations that generated them. This includes health checks, scans and retries, and readings you did not manually save. The browser retains the latest trace for offline download after disconnecting or reopening the app. The trace contains the original adapter text, including any vehicle identifiers returned by a diagnostic request.
+
 In **General OBD-II**, choose a service mode and start a read. For parameterized modes, use **Find supported IDs** to list the identifiers the vehicle reports, enter a known hexadecimal ID, or select **Read all supported** to query each advertised ID once. For freeze-frame data, choose a frame number. Common parameters are decoded with units, and data without a decoder is shown as hexadecimal. Modes `$04` and `$08` provide descriptions only.
 
 Select **Save reading** after a successful read to keep a timestamped copy in this browser's local storage. **Saved readings** groups records by date and lets you filter by mode or ECU. Open a record to view or delete it. For comparable live readings, history shows a trend once two or more samples are saved. A disconnected adapter leaves the last displayed result visible with its original read time. Readings stay in the browser that saved them and are removed if its site data is cleared.

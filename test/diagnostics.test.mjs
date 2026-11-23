@@ -3,6 +3,7 @@ import test from 'node:test';
 import { chooseAdapter, openAdapter } from '../dist/ble.mjs';
 import { decodeMode03, readAdapterHealth, readVehicleHealth } from '../dist/obd.mjs';
 import { readGeneralOBD } from '../dist/modes.mjs';
+import { traceSession } from '../dist/history.mjs';
 
 test('decodes legacy, CAN, multiline CAN, and empty replies', () => {
   assert.deepEqual(decodeMode03('03\r43 01 33 00 00 00 00', '3'), ['P0133']);
@@ -122,9 +123,11 @@ test('rejects an in-flight command on disconnection and after a timeout', async 
   dropped.device.gatt.disconnect();
   await pending;
 
-  const timedOut = mockAdapter({}, (_session, error) => assert.match(error.message, /did not finish/));
-  const timedOutSession = await timedOut.session;
+  const timedOut = mockAdapter({ ATI: ['ELM327'] }, (_session, error) => assert.match(error.message, /did not finish/));
+  const timedOutSession = traceSession(await timedOut.session, { timestamped: true });
   await assert.rejects(timedOutSession.command('ATI', 5), /did not finish/);
+  assert.equal(timedOutSession.exchanges[0].partialResponse, 'ELM327');
+  assert.ok(Date.parse(timedOutSession.exchanges[0].finishedAt) >= Date.parse(timedOutSession.exchanges[0].startedAt));
   assert.equal(timedOut.device.gatt.connected, false);
   await assert.rejects(timedOutSession.command('ATI'), /disconnected/);
 });

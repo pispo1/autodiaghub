@@ -16,6 +16,7 @@
 - [x] Expand General OBD-II to show mode descriptions, support status, and returned data by service.
 - [x] Save selected General OBD-II readings locally and review them offline, with trends for comparable live readings.
 - [x] Read all advertised identifiers in the selected generic mode and download raw exchanges from newly saved OBD-II readings and PSA ECU snapshots.
+- [x] Download the latest adapter session with timestamped exchanges from all diagnostic sections.
 - [x] Open responding ECUs directly, stop scans after the current ECU, save or export complete and partial scans, and compare saved scans of the same profile.
 - [x] Show diagnostic connector guidance by vehicle or architecture and remove cross-pin comparisons.
 - [x] Bundle four C4 Picasso profiles and their matched diagnostic definitions from a pinned PSA-RE revision.

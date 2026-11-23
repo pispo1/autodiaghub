@@ -12,6 +12,7 @@ flowchart LR
 
 - A user-initiated connection opens the adapter's BLE GATT service. Use the service and characteristic UUIDs for the exact adapter model, then confirm they work in Bluefy. [Web Bluetooth documentation](https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API)
 - The three sections share a single adapter connection. Serialize requests so replies from health checks, generic diagnostics, and PSA diagnostics can be matched to the correct request. Parse replies independently of BLE so the diagnostic layer can be tested with synthetic responses.
+- The adapter command wrapper captures a session-wide trace with timestamps. Session exports include operation boundaries, available PSA context, and interrupted replies. The browser checkpoints the latest trace after operations and on disconnect or page exit. Per-reading exports keep their own scope.
 - All runtime assets are packaged with the app. The service worker caches them after the first HTTPS visit. The diagnostic session needs no backend or external requests. Verify offline reopening in Bluefy itself.
 
 ## ELM327 Health

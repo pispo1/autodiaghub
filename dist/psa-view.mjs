@@ -506,7 +506,7 @@ export function mountPsaView({ element, status, renderValues, runOperation, pers
     progress.max = total;
     progress.value = 0;
     progress.hidden = false;
-    runOperation('psa-status', scanSummary(report), async (session) => {
+    runOperation('psa-status', 'Scanning ECUs · ' + scanSummary(report), async (session) => {
       const traced = traceSession(session);
       let nextExchange = 0;
       let outcome = 'interrupted';
@@ -691,5 +691,12 @@ export function mountPsaView({ element, status, renderValues, runOperation, pers
     }
   });
 
-  return { update, disconnectSession };
+  function traceContext(includeEcu) {
+    const context = { vehicle: vehiclePicker.value, variant: variantPicker.value };
+    if (includeEcu && ecuPicker.value) context.ecu = ecuPicker.value;
+    if (includeEcu && modelPicker.value) context.model = modelPicker.value;
+    return context;
+  }
+
+  return { update, disconnectSession, traceContext };
 }

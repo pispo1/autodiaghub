@@ -147,7 +147,9 @@ class AdapterSession {
     this.#pending = undefined;
     if (pending) {
       clearTimeout(pending.timer);
-      pending.reject(error || new Error('Adapter disconnected.'));
+      const failure = error || new Error('Adapter disconnected.');
+      if (pending.buffer) failure.partialResponse = pending.response ?? pending.buffer;
+      pending.reject(failure);
     }
     if (this.#device.gatt.connected) this.#device.gatt.disconnect();
     if (error) this.#onDisconnect(this, error);

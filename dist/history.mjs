@@ -126,19 +126,23 @@ export function makeReading(selection, result, time = Date.now()) {
   return isReading(reading) ? reading : null;
 }
 
-export function traceSession(session) {
+export function traceSession(session, { timestamped = false } = {}) {
   const exchanges = [];
   return {
     exchanges,
     async command(request, timeout) {
       const exchange = { request };
+      if (timestamped) exchange.startedAt = new Date().toISOString();
       exchanges.push(exchange);
       try {
         exchange.response = await session.command(request, timeout);
         return exchange.response;
       } catch (error) {
         exchange.error = error?.message ?? String(error);
+        if (timestamped && typeof error?.partialResponse === 'string') exchange.partialResponse = error.partialResponse;
         throw error;
+      } finally {
+        if (timestamped) exchange.finishedAt = new Date().toISOString();
       }
     },
     close: (error) => session.close?.(error),
