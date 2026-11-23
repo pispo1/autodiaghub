@@ -24,7 +24,9 @@ The mode selector lists `$01` through `$0A`. Reads are on demand. For parameteri
 
 Show descriptions for modes that change vehicle state, including `$04` (clear emissions-related diagnostic information) and `$08` (control of an onboard system or test). Opening the section or checking support only sends read requests. The requested clear action is part of the PSA ECU workflow below. [OBD-II service modes](https://www.snapon.com/DiagnosticsManuals/Help/OBDII/Content/Common/Help%20Topics/OBD/OBDII%20Service%20Modes.htm)
 
-An explicit save stores the result, read time, mode, identifier, applicable frame or sensor, and protocol in local storage. Each reading has its own versioned key so separate tabs can save independently. The offline history plots single-value Mode `$01` readings with matching PID, protocol, and units. Saved readings have no automatic vehicle association.
+**Read all supported** discovers the selected mode's advertised ranges and reads each advertised data identifier sequentially, using the selected frame or sensor where applicable. The result reports each identifier's decoded data or read failure.
+
+An explicit save stores the result, read time, mode, identifier or batch indicator, applicable frame or sensor, and protocol in local storage. The same recording wrapper captures adapter commands and their response text before diagnostic parsing for General OBD-II readings and saved PSA ECU operations. History previews or exports those exchanges as JSON. Each reading has its own versioned key so separate tabs can save independently. The offline history plots single-value Mode `$01` readings with matching PID, protocol, and units. Saved generic readings have no automatic vehicle association.
 
 ## PSA-specific diagnostics
 
@@ -34,6 +36,10 @@ The scanner uses 11-bit CAN at 500 kbit/s through the diagnostic port. It sends 
 
 Selected models support documented UDS or KWP-over-CAN parameter reads. A batch uses one ECU route and sends each selected read in sequence. Fields are decoded only when the response length matches the definition. Supported UDS models list active or confirmed DTCs and show the flags reported by the ECU's status-availability mask. Supported PSA KWP models show DTCs with the raw status byte. A confirmed clear first rereads the target ECU, sends a single physically addressed request, and checks the acknowledgement and follow-up DTC list separately. An uncertain result never triggers a retry.
 
-Browser storage retains the selected vehicle and variant and any manually saved snapshots. Each new Bluetooth session starts with fresh ECU scan results. Coverage through the vehicle gateway is pending device validation, as are fault freeze-frame reads.
+Browser storage retains the selected vehicle and variant and any manually saved snapshots. Disconnecting preserves visible readings and invalidates live ECU verification. A single-ECU retry uses the same read-only scanner for one catalog entry and updates the visible result. A saved scan records its original run. Coverage through the vehicle gateway is pending device validation, as are fault freeze-frame reads.
+
+**Identify ECU** reuses the documented parameter-read path for the selected model’s ECU and supplier identifiers. A scan confirms a responding CAN address and identifies candidate profiles. The app displays identity fields reported by the ECU when the selected profile can decode them. Response details use the same field decoding as the result rows and are saved with new parameter and identification snapshots.
+
+Scans stream one result per checked ECU to the view. Stopping takes effect at an ECU boundary and restores the generic adapter configuration. The optional fault pass reads DTCs during discovery only after a unique supported model matches. Saved reports retain completed outcomes and raw exchanges. History compares scans for the same profile and matches connector labels for older scans. Fault comparisons require a successful read from the same ECU model in both scans. The vehicle picker shows offline pinout guidance from vehicle wiring references where available and architecture references otherwise.
 
 See the [technical decisions](DECISIONS.md) and the [acceptance criteria](PROJECT_STATUS.md).

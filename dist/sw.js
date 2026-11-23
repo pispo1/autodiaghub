@@ -1,4 +1,4 @@
-const cacheName = 'autodiaghub-shell-v9';
+const cacheName = 'autodiaghub-shell-v15';
 const assetPaths = [
   'index.html', 'style.css', 'app.mjs', 'ble.mjs', 'obd.mjs', 'modes.mjs', 'history.mjs',
   'psa.mjs', 'psa-view.mjs', 'psa/catalog.json', 'psa/NOTICE.txt', 'psa/LICENSE.txt',

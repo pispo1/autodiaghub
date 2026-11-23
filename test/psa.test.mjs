@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  clearPsaDtcs, decodePsaDtcs, decodePsaParameter, parsePsaResponse, readPsaDtcs, readPsaParameters, scanPsaEcus,
+  clearPsaDtcs, decodePsaDtcs, decodePsaParameter, ecuIdentificationIds, parsePsaResponse,
+  readPsaDtcs, readPsaParameters, scanPsaEcus,
 } from '../dist/psa.mjs';
+import { diagnosticPinout } from '../dist/psa-view.mjs';
 
 const catalog = JSON.parse(readFileSync(new URL('../dist/psa/catalog.json', import.meta.url)));
 const picasso2 = catalog.vehicles.find(({ code }) => code === 'B78');
@@ -11,6 +13,17 @@ const phase2 = picasso2.variants.find(({ id }) => id === 'phase2');
 const abs = phase2.ecus.find(({ id }) => id === 'ABS');
 const esp = catalog.models[abs.models[0].key];
 const legacyBsi = catalog.models['diag/AEE2004.full/BSI/BSI'];
+
+test('connector guidance follows the selected vehicle variant and architecture', () => {
+  const picasso1 = catalog.vehicles.find(({ code }) => code === 'B58');
+  const { text, source } = diagnosticPinout('B58', picasso1.variants[0]);
+  assert.match(text, /pin 3 \(CAN High\).*pin 8 \(CAN Low\)/);
+  assert.match(source, /id=94208/);
+  assert.match(diagnosticPinout('B78', picasso2.variants[0]).source, /aee2010-full/);
+  assert.match(diagnosticPinout('B78', phase2).text, /architecture-level guidance/);
+  assert.match(diagnosticPinout('other', { architecture: 'NEA2020.full' }).text, /pin 6 .*pin 14 /);
+  assert.equal(diagnosticPinout('other', { architecture: 'AEE2001.full' }).source, undefined);
+});
 
 function adapter(reads) {
   const commands = [];
@@ -109,9 +122,11 @@ test('reads one documented parameter, keeps raw bytes, and reads only UDS active
     ['6AD/22D42E', '68D 04 62 D4 2E 60 00'],
     ['6AD/190209', '68D 07 59 02 FF 05 62 01 09'],
   ]));
-  const [{ rows }] = await readPsaParameters(session, esp, ['D42E']);
+  const [{ rows, explanation }] = await readPsaParameters(session, esp, ['D42E']);
   assert.equal(rows[0].value, '48 %');
   assert.deepEqual(rows.at(-1), { label: 'Raw data', value: '60' });
+  assert.deepEqual([explanation.request, explanation.response], ['22D42E', '62D42E60']);
+  assert.match(explanation.fields[0].value, /Bits 1\.7-1\.0 · 0x60 represents 96\. 96 × 0\.5 = 48 %/);
   assert.deepEqual(await readPsaDtcs(session, esp), [
     { code: 'P0562-01', description: 'ESP ECU electrical supply', status: '09', flags: ['Test failed', 'Confirmed'] },
   ]);
@@ -123,6 +138,44 @@ test('reads one documented parameter, keeps raw bytes, and reads only UDS active
   await assert.rejects(readPsaDtcs(session, { ...esp, protocol: 'KWP2000' }), /no supported DTC read/);
   assert.deepEqual(session.commands, sent);
   assert.deepEqual(sent.filter((command) => !command.startsWith('AT')), ['22D42E', '190209']);
+});
+
+test('identifies a supported ECU from documented identity reads and reports incomplete definitions', async () => {
+  const session = adapter(new Map([
+    ['6AD/22F080', '68D 10 0F 62 F0 80 12 34 56\r68D 21 78 90 00 03 98 76 54\r68D 22 32 10'],
+    ['6AD/22F0FE', '68D 04 62 F0 FE 01'],
+  ]));
+  const ids = ecuIdentificationIds(esp);
+  assert.deepEqual(ids, ['F080', 'F0FE']);
+  const [identity, short] = await readPsaParameters(session, esp, ids);
+  assert.deepEqual(identity.rows.slice(0, 2), [
+    { label: 'Equipment part number', value: '1234567890' },
+    { label: 'Name supplier', value: 'BOSCH' },
+  ]);
+  assert.match(identity.explanation.fields[1].value, /maps to BOSCH/);
+  assert.equal(short.explanation.note, 'Expected 24 data bytes. ECU returned 1.');
+  assert.deepEqual(session.commands.filter(command => !command.startsWith('AT')), ['22F080', '22F0FE']);
+  assert.deepEqual(ecuIdentificationIds(legacyBsi), ['80']);
+});
+
+test('optional scan fault reads require a unique model and stopping restores adapter settings', async () => {
+  const session = adapter(new Map([
+    ['6AD/22F0FE', '68D 04 62 F0 FE 01'],
+    ['6AD/190209', '68D 07 59 02 FF 05 62 01 09'],
+  ]));
+  const variant = { ecus: [
+    { id: 'ambiguous', models: [{ key: 'a' }, { key: 'b' }] },
+    { id: 'unique', models: [{ key: 'a' }] },
+    { id: 'unchecked', models: [{ key: 'a' }] },
+  ] };
+  const results = new Map();
+  await scanPsaEcus(session, variant, { a: esp, b: esp }, (id, result) => results.set(id, result),
+    { shouldStop: () => results.size === 2, includeFaults: true });
+  assert.equal(results.get('ambiguous').faults, undefined);
+  assert.deepEqual(results.get('unique').faults, ['P0562-01']);
+  assert.equal(results.has('unchecked'), false);
+  assert.deepEqual(session.commands.filter(command => !command.startsWith('AT')), ['22F0FE', '22F0FE', '190209']);
+  assert.equal(session.commands.at(-1), 'ATTP0');
 });
 
 test('restores general OBD settings if a PSA request is rejected', async () => {

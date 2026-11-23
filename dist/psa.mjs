@@ -102,9 +102,12 @@ async function sendRead(session, model, request) {
   return requestRead(session, model, request);
 }
 
-export async function scanPsaEcus(session, variant, models, onResult) {
+export async function scanPsaEcus(session, variant, models, onResult, {
+  shouldStop = () => false, includeFaults = false,
+} = {}) {
   return withPsaAdapter(session, async () => {
     for (const ecu of variant.ecus) {
+      if (shouldStop()) break;
       if (!ecu.models.length) continue;
       const probes = new Map();
       for (const link of ecu.models) {
@@ -133,10 +136,22 @@ export async function scanPsaEcus(session, variant, models, onResult) {
           if (error.kind === 'invalid') invalid = true;
         }
       }
-      onResult(ecu.id, {
+      const result = {
         state: matched.length ? 'detected' : rejected !== undefined ? 'rejected' : invalid ? 'invalid' : 'no-reply',
         modelKeys: matched, replies, rejected,
-      });
+      };
+      const model = models[matched[0]];
+      if (includeFaults && matched.length === 1 && model.readDtcs && !shouldStop()) {
+        await configureTarget(session, model);
+        try {
+          const faults = await readTargetDtcs(session, model);
+          result.faults = faults.map(({ code }) => code);
+        } catch (error) {
+          if (!(error instanceof OBDReplyError)) throw error;
+          result.faultError = error.message;
+        }
+      }
+      onResult(ecu.id, result);
     }
   });
 }
@@ -146,6 +161,12 @@ function checkedData(response) {
     throw new OBDReplyError('unconfirmed', 'The ECU rejected the read (NRC $' + hex(response.rejected) + ').');
   }
   return response.data;
+}
+
+export function ecuIdentificationIds(model) {
+  const ids = model?.protocol === 'UDS' ? ['F080', 'F0FE'] : ['80', 'FE'];
+  return model?.parameters.filter(parameter => parameter.kind === 'identification' && ids.includes(parameter.id))
+    .map(({ id }) => id) || [];
 }
 
 function decodeField(field, bytes) {
@@ -160,10 +181,11 @@ function decodeField(field, bytes) {
     const data = bytes.slice(start / 8, (end + 1) / 8);
     if (field.type === 'bcd') {
       const value = data.map(hex).join('');
-      return /^[0-9]+$/.test(value) ? value : null;
+      return /^[0-9]+$/.test(value) ? { value, detail: formatHex(data) + ' read as decimal digits' } : null;
     }
     if (data.every((byte) => byte === 0 || (byte >= 0x20 && byte <= 0x7e))) {
-      return String.fromCharCode(...data.filter(Boolean)).trim() || null;
+      const value = String.fromCharCode(...data.filter(Boolean)).trim();
+      return value ? { value, detail: formatHex(data) + ' read as ASCII' } : null;
     }
     return null;
   }
@@ -172,23 +194,38 @@ function decodeField(field, bytes) {
   for (let position = start; position <= end; position++) {
     value = value * 2 + (bytes[position >> 3] >> (7 - position % 8) & 1);
   }
-  if (field.type === 'enum') return field.values?.[value] || '$' + hex(value);
-  if (field.type === 'bool') return value ? 'Yes' : 'No';
+  if (field.type === 'enum') {
+    const label = field.values?.[value];
+    return { value: label || '$' + hex(value), detail: '0x' + hex(value) + (label ? ' maps to ' + label : ' has no documented label') };
+  }
+  if (field.type === 'bool') return { value: value ? 'Yes' : 'No', detail: value + ' read as a boolean' };
+  const hexValue = hex(value);
   if (field.type === 'int' && value >= 2 ** (width - 1)) value -= 2 ** width;
-  value = value * (field.factor ?? 1) + (field.offset ?? 0);
-  return String(Number(value.toFixed(6))) + (field.unit ? ' ' + field.unit : '');
+  const factor = field.factor ?? 1;
+  const offset = field.offset ?? 0;
+  const scaled = Number((value * factor + offset).toFixed(6)) + (field.unit ? ' ' + field.unit : '');
+  const formula = value + ' × ' + factor + (offset < 0 ? ' − ' + -offset : offset ? ' + ' + offset : '') + ' = ' + scaled;
+  return { value: scaled, detail: '0x' + hexValue + ' represents ' + value + '. ' + formula };
 }
 
-export function decodePsaParameter(parameter, bytes) {
+function inspectPsaParameter(parameter, bytes) {
   const rows = [];
+  const fields = [];
   if (parameter.length === bytes.length) {
     for (const field of parameter.fields) {
-      const value = decodeField(field, bytes);
-      if (value !== null) rows.push({ label: field.name, value });
+      const decoded = decodeField(field, bytes);
+      if (decoded) {
+        rows.push({ label: field.name, value: decoded.value });
+        fields.push({ label: field.name, value: 'Bits ' + field.bits + ' · ' + decoded.detail });
+      }
     }
   }
   rows.push({ label: 'Raw data', value: formatHex(bytes) });
-  return rows;
+  return { rows, fields };
+}
+
+export function decodePsaParameter(parameter, bytes) {
+  return inspectPsaParameter(parameter, bytes).rows;
 }
 
 export async function readPsaParameters(session, model, parameterIds, onProgress = () => {}) {
@@ -202,13 +239,23 @@ export async function readPsaParameters(session, model, parameterIds, onProgress
     const results = [];
     const prefix = model.protocol === 'UDS' ? '22' : '21';
     for (const parameter of parameters) {
+      const request = prefix + parameter.id;
+      const explanation = { id: parameter.id, request };
       try {
-        const bytes = checkedData(await requestRead(session, model, prefix + parameter.id));
+        const bytes = checkedData(await requestRead(session, model, request));
         if (!bytes.length) throw new OBDReplyError('invalid', 'The ECU returned an empty parameter value.');
-        results.push({ parameter, rows: decodePsaParameter(parameter, bytes) });
+        const { rows, fields } = inspectPsaParameter(parameter, bytes);
+        explanation.response = (prefix === '22' ? '62' : '61') + parameter.id + bytes.map(hex).join('');
+        explanation.fields = fields;
+        if (!fields.length) {
+          explanation.note = parameter.length && parameter.length !== bytes.length
+            ? 'Expected ' + parameter.length + ' data bytes. ECU returned ' + bytes.length + '.'
+            : 'No fields could be decoded using this definition.';
+        }
+        results.push({ parameter, rows, explanation });
       } catch (error) {
         if (!(error instanceof OBDReplyError)) throw error;
-        results.push({ parameter, error: error.message });
+        results.push({ parameter, error: error.message, explanation: { ...explanation, note: error.message } });
       }
       onProgress(results.length, parameters.length);
     }
@@ -259,8 +306,13 @@ function modelDtcServices(model) {
 async function readTargetDtcs(session, model) {
   const { read } = modelDtcServices(model);
   const response = await requestRead(session, model, read);
+  const data = checkedData(response);
   const decode = model.protocol === 'UDS' ? decodePsaDtcs : decodeKwpDtcs;
-  return decode(checkedData(response), model.dtcs);
+  try {
+    return decode(data, model.dtcs);
+  } catch (error) {
+    throw new OBDReplyError('invalid', error.message);
+  }
 }
 
 export async function readPsaDtcs(session, model) {

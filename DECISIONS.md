@@ -36,6 +36,10 @@ Use pinned PSA-RE data for vehicle and ECU browsing offline. Enable live scans f
 
 Keep discovery and reads independent of clearing. The clear action names the detected ECU and states the scope of the operation. Confirm the target with a fresh read, send one clear request, and reread its DTCs. Report missing acknowledgement or follow-up data as an uncertain outcome.
 
+## D-007. Show documented connector pinouts by vehicle
+
+Show the diagnostic CAN pins for the selected vehicle and variant, with a source link. Label architecture-level wiring when there is no exact variant reference. Keep historical pin labels in saved scans and limit their comparisons to matching labels.
+
 ## Open decisions
 
 | Decision | Information needed |

@@ -231,8 +231,10 @@ function readConfiguration(modeId, identifier, extra, discover) {
   return mode;
 }
 
-export async function readGeneralOBD(session, { modeId, identifier, extra, discover = false }) {
-  const mode = readConfiguration(modeId, identifier, extra, discover);
+export async function readGeneralOBD(session, { modeId, identifier, extra, discover = false, readAll = false },
+  onProgress = () => {}) {
+  const discoverRanges = discover || readAll;
+  const mode = readConfiguration(modeId, identifier, extra, discoverRanges);
   const suffix = mode.id === '02' || mode.id === '05' ? extra : '';
   const extraByte = suffix ? Number.parseInt(suffix, 16) : undefined;
   await prepareOBD(session);
@@ -261,10 +263,25 @@ export async function readGeneralOBD(session, { modeId, identifier, extra, disco
   async function readId(id) {
     const command = modeId + hex(id) + suffix;
     const raw = await request(command);
-    return dataFor(responsePayloads(raw, command, protocol.number), id, extraByte);
+    try {
+      return dataFor(responsePayloads(raw, command, protocol.number), id, extraByte);
+    } catch (error) {
+      if (error instanceof OBDReplyError) throw error;
+      throw new OBDReplyError('invalid', error.message);
+    }
   }
 
-  const id = discover ? 0 : Number.parseInt(identifier, 16);
+  function decodeRows(id, replies) {
+    if (mode.id === '09') return vehicleInfoRows(id, replies, isCan(protocol.number));
+    return replies.flatMap((bytes, index) => {
+      const entries = mode.id === '01' || mode.id === '02' ? pidRows(id, bytes) :
+        testRows(mode.id, id, bytes, isCan(protocol.number));
+      return replies.length === 1 ? entries : entries.map(({ label, value }) =>
+        row('Reply ' + (index + 1) + ' · ' + label, value));
+    });
+  }
+
+  const id = discoverRanges ? 0 : Number.parseInt(identifier, 16);
   const isSupportPage = id % 32 === 0;
   const replies = await readId(id);
   if (isSupportPage) {
@@ -281,7 +298,7 @@ export async function readGeneralOBD(session, { modeId, identifier, extra, disco
       for (const entry of supported) {
         if (entry % 32 !== 0) ids.add(entry);
       }
-      if (!discover || page >= 0xe0 || !supported.includes(page + 32)) break;
+      if (!discoverRanges || page >= 0xe0 || !supported.includes(page + 32)) break;
       page += 32;
       try {
         data = await readId(page);
@@ -291,15 +308,33 @@ export async function readGeneralOBD(session, { modeId, identifier, extra, disco
         break;
       }
     }
-    return { protocol: protocol.description, supported: [...ids].sort((a, b) => a - b), note };
+    const supported = [...ids].sort((a, b) => a - b);
+    if (!readAll || !supported.length) return { protocol: protocol.description, supported, note };
+
+    const rows = [];
+    let successful = 0;
+    let completed = 0;
+    for (const id of supported) {
+      const label = '$' + hex(id);
+      let data;
+      try {
+        data = await readId(id);
+      } catch (error) {
+        if (!(error instanceof OBDReplyError)) throw error;
+        rows.push(row(label, error.message));
+      }
+      if (data) {
+        try {
+          rows.push(...decodeRows(id, data).map((entry) => row(label + ' · ' + entry.label, entry.value)));
+          successful++;
+        } catch (error) {
+          rows.push(row(label, error.message));
+        }
+      }
+      onProgress(++completed, supported.length);
+    }
+    return { protocol: protocol.description, supported, rows, note, successful };
   }
 
-  const rows = mode.id === '09' ? vehicleInfoRows(id, replies, isCan(protocol.number)) :
-    replies.flatMap((bytes, index) => {
-      const entries = mode.id === '01' || mode.id === '02' ? pidRows(id, bytes) :
-        testRows(mode.id, id, bytes, isCan(protocol.number));
-      return replies.length === 1 ? entries : entries.map(({ label, value }) =>
-        row('Reply ' + (index + 1) + ' · ' + label, value));
-    });
-  return { protocol: protocol.description, rows };
+  return { protocol: protocol.description, rows: decodeRows(id, replies) };
 }

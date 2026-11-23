@@ -15,10 +15,15 @@
 
 - [x] Expand General OBD-II to show mode descriptions, support status, and returned data by service.
 - [x] Save selected General OBD-II readings locally and review them offline, with trends for comparable live readings.
+- [x] Read all advertised identifiers in the selected generic mode and download raw exchanges from newly saved OBD-II readings and PSA ECU snapshots.
+- [x] Open responding ECUs directly, stop scans after the current ECU, save or export complete and partial scans, and compare saved scans of the same profile.
+- [x] Show diagnostic connector guidance by vehicle or architecture and remove cross-pin comparisons.
 - [x] Bundle four C4 Picasso profiles and their matched diagnostic definitions from a pinned PSA-RE revision.
 - [x] Include all 155 variants from the pinned PSA-RE vehicle catalog and label live scan coverage in the offline picker.
 - [x] Implement ECU scanning for documented diagnostic routes, parameter reads, and active or confirmed UDS DTC reads.
 - [x] Add searchable ECU parameters, batch reads, readable UDS status flags, and locally saved ECU snapshots.
+- [x] Display ECU response routes, read documented identification fields, and explain parameter decoding in live and saved results.
+- [x] Keep parameter controls accessible while scrolling, mark old readings with timestamps, filter and retry ECU results, and browse saved readings by date or ECU.
 - [x] Restore the selected vehicle and variant from browser storage.
 - [x] Implement and simulate documented per-ECU DTC reads and confirmed clearing for UDS and PSA KWP.
 - [ ] Match the target C4 Picasso to a bundled profile and verify its ECU reachability and read results in Bluefy.

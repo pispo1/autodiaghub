@@ -1,8 +1,9 @@
 import { chooseAdapter, openAdapter } from './ble.mjs';
 import { readAdapterHealth, readVehicleHealth } from './obd.mjs';
 import { identifierName, modes, readGeneralOBD } from './modes.mjs';
-import { deleteReading, listReadings, makeReading, saveReading, trendFor } from './history.mjs';
-import { mountPsaView } from './psa-view.mjs';
+import { compareScans, deleteReading, listReadings, makeReading, rawExchangeFile, saveReading,
+  scanBaselines, scanRows, scanSummary, traceSession, trendFor } from './history.mjs';
+import { mountPsaView, renderPsaExplanations } from './psa-view.mjs';
 
 const element = (id) => document.getElementById(id);
 const connect = element('connect');
@@ -10,6 +11,7 @@ const disconnect = element('disconnect');
 const health = element('health');
 const scan = element('scan');
 const discover = element('discover');
+const readAll = element('read-all');
 const service = element('service');
 const codes = element('codes');
 const values = element('obd-values');
@@ -21,8 +23,12 @@ const supportedPicker = element('obd-supported');
 const saveButton = element('save-reading');
 const refreshButton = element('refresh-app');
 const historyMode = element('history-mode');
-const historyPicker = element('history-reading');
+const historyEcu = element('history-ecu');
+const historyList = element('history-list');
+const historyBaseline = element('history-baseline');
 const historyDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
+const historyDay = new Intl.DateTimeFormat(undefined, { dateStyle: 'full' });
+const historyTime = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
 const currentMode = () => modes.find(({ id }) => id === modePicker.value);
 
 for (const mode of modes) {
@@ -31,6 +37,7 @@ for (const mode of modes) {
   if (!mode.infoOnly) historyMode.add(new Option(label, mode.id));
 }
 historyMode.add(new Option('PSA ECU snapshots', 'PSA'));
+historyMode.add(new Option('PSA ECU scans', 'PSA-SCAN'));
 modePicker.value = '03';
 for (let slot = 0; slot < 8; slot++) {
   const mask = (1 << slot).toString(16).toUpperCase().padStart(2, '0');
@@ -42,6 +49,8 @@ let session;
 let busy = false;
 let pendingReading;
 let savedReadings = [];
+let selectedHistoryKey;
+let obdReadTime;
 let psaView;
 let offlineRegistration;
 
@@ -51,16 +60,34 @@ function status(id, message, tone = 'idle') {
   field.dataset.tone = tone;
 }
 
+function reportVehicleReply() {
+  status('vehicle-status', 'Vehicle replied', 'ready');
+}
+
+function renderReadTime(id, time, label) {
+  const field = element(id);
+  field.hidden = time === undefined;
+  if (field.hidden) {
+    field.removeAttribute('datetime');
+    field.textContent = '';
+    return;
+  }
+  field.dateTime = new Date(time).toISOString();
+  field.textContent = label + ' · ' + historyDate.format(time);
+}
+
 function renderControls() {
   connect.hidden = Boolean(session);
   connect.disabled = busy || !canConnect;
   service.disabled = busy || Boolean(session);
   disconnect.hidden = !session;
+  element('vehicle-status').hidden = !session;
   health.disabled = busy || !session;
   refreshButton.disabled = busy || !offlineRegistration;
   const mode = currentMode();
   scan.disabled = busy || !session || mode.infoOnly;
   discover.disabled = busy || !session || !mode.identifier;
+  readAll.disabled = discover.disabled;
   for (const field of [modePicker, identifier, frame, sensor, supportedPicker]) field.disabled = busy;
   psaView?.update(Boolean(session), busy);
 }
@@ -70,6 +97,8 @@ function clearScanResults() {
   codes.hidden = true;
   values.replaceChildren();
   values.hidden = true;
+  obdReadTime = undefined;
+  renderReadTime('obd-read-time');
   pendingReading = undefined;
   element('save-actions').hidden = true;
   saveButton.disabled = false;
@@ -95,6 +124,7 @@ function showMode() {
   identifier.value = mode.defaultId || '';
   scan.hidden = Boolean(mode.infoOnly);
   discover.hidden = !mode.identifier;
+  readAll.hidden = !mode.identifier;
   scan.textContent = mode.troubleCodes ? 'Read ' + mode.title.toLowerCase() : 'Read value';
   clearScanResults();
   clearSupported();
@@ -103,23 +133,24 @@ function showMode() {
 }
 
 function resetReadings() {
+  status('vehicle-status', 'Vehicle reply not yet checked');
   element('firmware').textContent = '—';
   element('adapter-id').textContent = '—';
   element('voltage').textContent = '—';
   element('vehicle').textContent = 'Not checked';
   element('protocol').textContent = '—';
   element('vehicle-reply').textContent = '—';
-  clearScanResults();
   clearSupported();
   status('health-status', 'Connect an adapter to check its health.');
-  showScanPrompt();
+  if (obdReadTime === undefined) showScanPrompt();
+  else renderReadTime('obd-read-time', obdReadTime, 'Last reading · disconnected');
 }
 
 function showDisconnected(endedSession, error) {
   if (session !== endedSession) return;
   session = undefined;
   resetReadings();
-  psaView.reset();
+  psaView.disconnectSession();
   status('connection-status', error?.message || 'Adapter disconnected', error ? 'error' : 'idle');
   renderControls();
 }
@@ -152,7 +183,7 @@ async function checkHealth(includeVehicle) {
     element('voltage').textContent = result.voltage || 'Not reported';
     const adapterComplete = Boolean(result.version && result.voltage);
     if (!includeVehicle) {
-      status('health-status', adapterComplete ? 'Check the vehicle to detect its OBD protocol.' :
+      status('health-status', adapterComplete ? '' :
         'The adapter did not report every value.');
       return;
     }
@@ -172,6 +203,7 @@ async function checkHealth(includeVehicle) {
       throw error;
     }
     if (session !== active) return;
+    reportVehicleReply();
     vehicle.textContent = report.replies.length + (report.replies.length === 1 ? ' reply' : ' replies');
     const { code, description } = report.protocol;
     protocol.textContent = description === 'Protocol ' + code ? description : description + ' · ' + code;
@@ -190,8 +222,9 @@ connect.addEventListener('click', async () => {
     const selected = await chooseAdapter(navigator.bluetooth, service.value.trim());
     status('connection-status', 'Connecting to the adapter…');
     session = await openAdapter(selected, showDisconnected);
-    status('connection-status', 'Connected to ' + session.name, 'ready');
+    status('connection-status', 'Adapter connected · ' + session.name, 'ready');
     status('health-status', 'Ready to check the adapter.');
+    if (obdReadTime !== undefined) renderReadTime('obd-read-time', obdReadTime, 'Previous connection');
     showScanPrompt();
   } catch (error) {
     if (error.name === 'NotFoundError') {
@@ -276,6 +309,13 @@ function displayResult(result, mode) {
       supportedPicker.add(new Option('$' + hex + (name ? ' · ' + name : ''), hex));
     }
     element('supported-field').hidden = result.supported.length === 0;
+    if (result.rows) {
+      renderValues(values, result.rows);
+      const message = result.successful + ' of ' + result.supported.length + ' supported identifiers read.';
+      status('scan-status', [message, result.note].filter(Boolean).join(' '),
+        result.note || result.successful !== result.supported.length ? 'idle' : 'ready');
+      return;
+    }
     const count = result.supported.length;
     const message = count === 0 ? 'No supported data identifiers reported.' :
       count + (count === 1 ? ' supported identifier reported.' : ' supported identifiers reported.');
@@ -286,50 +326,66 @@ function displayResult(result, mode) {
   status('scan-status', 'Read complete.', 'ready');
 }
 
-function runScan(findSupported) {
+function runScan(action) {
   const mode = currentMode();
   if (mode.infoOnly) return;
   const selection = {
     modeId: mode.id,
     identifier: identifier.value.trim().toUpperCase(),
     extra: mode.id === '05' ? sensor.value : frame.value.trim().toUpperCase(),
-    discover: findSupported,
+    discover: action === 'discover',
+    readAll: action === 'all',
   };
-  const message = findSupported ? 'Finding supported identifiers…' : 'Reading mode $' + mode.id + '…';
+  const message = action === 'read' ? 'Reading mode $' + mode.id + '…' : 'Finding supported identifiers…';
   return runOperation('scan-status', message, async (active) => {
-    clearScanResults();
-    if (findSupported) clearSupported();
+    if (obdReadTime !== undefined) renderReadTime('obd-read-time', obdReadTime, 'Last reading');
+    if (action !== 'read') clearSupported();
     const vehicle = element('vehicle');
     const previousVehicleState = vehicle.textContent;
     vehicle.textContent = 'Checking…';
+    const traced = traceSession(active);
     let result;
     try {
-      result = await readGeneralOBD(active, selection);
+      result = await readGeneralOBD(traced, selection, (done, total) => {
+        if (session === active) status('scan-status', 'Read ' + done + ' of ' + total + ' identifiers…');
+      });
     } catch (error) {
       if (session === active) {
+        clearScanResults();
         vehicle.textContent = error.kind === 'unsupported' ? 'Responded' : previousVehicleState;
+        if (error.kind === 'unsupported') reportVehicleReply();
       }
       throw error;
     }
     if (session !== active) return;
+    clearScanResults();
+    reportVehicleReply();
     vehicle.textContent = 'Responded';
     element('protocol').textContent = result.protocol;
     displayResult(result, mode);
-    pendingReading = makeReading(selection, result);
+    obdReadTime = Date.now();
+    renderReadTime('obd-read-time', obdReadTime, 'Read at');
+    pendingReading = makeReading(selection, { ...result, exchanges: traced.exchanges }, obdReadTime);
     element('save-actions').hidden = !pendingReading;
   });
 }
 
-scan.addEventListener('click', () => runScan(false));
-discover.addEventListener('click', () => runScan(true));
+scan.addEventListener('click', () => runScan('read'));
+discover.addEventListener('click', () => runScan('discover'));
+readAll.addEventListener('click', () => runScan('all'));
 
 function readingLabel(reading) {
+  if (reading.modeId === 'PSA-SCAN') {
+    return [reading.vehicle, reading.variant, reading.pinPair && 'Pins ' + reading.pinPair,
+      'Scan ' + reading.outcome].filter(Boolean).join(' · ');
+  }
   if (reading.modeId === 'PSA') {
     return [reading.vehicle, reading.variant, reading.ecu, reading.model].join(' · ');
   }
   const mode = modes.find(({ id }) => id === reading.modeId);
   const name = reading.identifier && identifierName(mode.id, Number.parseInt(reading.identifier, 16));
   const parts = ['$' + mode.id + ' ' + mode.title];
+  if (reading.batch) parts.push('All supported identifiers');
   if (reading.identifier) parts.push(mode.identifier + ' $' + reading.identifier);
   if (name) parts.push(name);
   if (reading.extra) parts.push((mode.id === '02' ? 'Frame $' : 'Sensor mask $') + reading.extra);
@@ -386,30 +442,105 @@ function drawTrend(trend) {
   }
 }
 
+function savedRawReplies(reading) {
+  return reading?.exchanges?.flatMap(({ request, response }) =>
+    !request.startsWith('AT') && typeof response === 'string' ? [response] : []) || [];
+}
+
 function showSavedReading() {
-  const selected = savedReadings.find(({ key }) => key === historyPicker.value);
+  const selected = savedReadings.find(({ key }) => key === selectedHistoryKey);
   element('history-result').hidden = !selected;
   if (!selected) return;
+  element('history-result-title').textContent = selected.modeId === 'PSA-SCAN' ? 'Saved scan' : 'Saved reading';
+  renderReadTime('history-read-time', selected.time, 'Read at');
   const label = [readingLabel(selected), selected.protocol];
+  if (selected.modeId === 'PSA-SCAN') {
+    label.push(scanSummary(selected));
+    if (selected.firmware && selected.firmware !== '—') label.push('Firmware ' + selected.firmware);
+  }
   if (selected.codes?.length === 0) label.push('No trouble codes returned');
   element('history-meta').textContent = label.join(' · ');
   renderCodes(element('history-codes'), selected.codes);
-  renderValues(element('history-values'), selected.rows);
+  renderValues(element('history-values'), selected.modeId === 'PSA-SCAN' ? scanRows(selected) : selected.rows);
+  renderPsaExplanations(element('history-explanations'), selected.explanations, renderValues);
   drawTrend(trendFor(savedReadings, selected));
+  const compare = element('history-scan-compare');
+  compare.hidden = selected.modeId !== 'PSA-SCAN';
+  if (!compare.hidden) {
+    const baselineKey = historyBaseline.value;
+    const earlier = scanBaselines(savedReadings, selected);
+    historyBaseline.replaceChildren(new Option('Choose an earlier scan', ''));
+    for (const scan of earlier) {
+      historyBaseline.add(new Option(historyDate.format(scan.time) + ' · ' + readingLabel(scan), scan.key));
+    }
+    if (earlier.some(({ key }) => key === baselineKey)) historyBaseline.value = baselineKey;
+    historyBaseline.disabled = !earlier.length;
+    showScanComparison();
+  }
+  const raw = rawExchangeFile(selected);
+  const download = element('history-download');
+  download.hidden = !raw;
+  download.textContent = selected.modeId === 'PSA-SCAN' ? 'Download scan' : 'Download raw exchange';
+  element('history-no-exchange').hidden = Boolean(raw);
+  const details = element('history-raw');
+  details.hidden = !raw;
+  details.open = false;
+  element('history-raw-text').textContent = raw?.contents || '';
+  element('history-copy').hidden = !savedRawReplies(selected).length;
+  element('history-raw-copy').hidden = true;
+  status('history-copy-status', '');
 }
 
-function renderHistory(preferred = historyPicker.value) {
-  const filtered = savedReadings.filter(({ modeId }) => !historyMode.value || modeId === historyMode.value);
-  historyPicker.replaceChildren();
+function showScanComparison() {
+  const previous = savedReadings.find(({ key }) => key === historyBaseline.value);
+  const selected = savedReadings.find(({ key }) => key === selectedHistoryKey);
+  const changes = previous && selected ? compareScans(previous, selected) : [];
+  renderValues(element('history-changes'), changes);
+  const message = historyBaseline.disabled ? 'Save another scan of this vehicle profile to compare.' :
+    previous ? changes.length ? '' : 'No changes in scan results or comparable fault codes.' : '';
+  status('history-compare-status', message);
+}
+
+function renderHistory(preferred = selectedHistoryKey) {
+  const matchingMode = savedReadings.filter(({ modeId }) => !historyMode.value || modeId === historyMode.value);
+  const ecus = [...new Set(matchingMode.map(({ ecu }) => ecu).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const preferredEcu = historyEcu.value;
+  historyEcu.replaceChildren(new Option('All ECUs', ''));
+  for (const ecu of ecus) historyEcu.add(new Option(ecu, ecu));
+  if (ecus.includes(preferredEcu)) historyEcu.value = preferredEcu;
+  historyEcu.disabled = !ecus.length;
+  const filtered = matchingMode.filter(({ ecu }) => !historyEcu.value || ecu === historyEcu.value);
+  selectedHistoryKey = filtered.some(({ key }) => key === preferred) ? preferred : filtered[0]?.key;
+  historyList.replaceChildren();
+  let day;
+  let list;
   for (const reading of filtered) {
-    const label = historyDate.format(reading.time) + ' · ' + readingLabel(reading);
-    historyPicker.add(new Option(label, reading.key));
+    const date = historyDay.format(reading.time);
+    if (date !== day) {
+      day = date;
+      const group = document.createElement('section');
+      const heading = document.createElement('h2');
+      heading.textContent = date;
+      list = document.createElement('ul');
+      group.append(heading, list);
+      historyList.append(group);
+    }
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.reading = reading.key;
+    button.setAttribute('aria-current', String(reading.key === selectedHistoryKey));
+    const time = document.createElement('time');
+    time.dateTime = new Date(reading.time).toISOString();
+    time.textContent = historyTime.format(reading.time);
+    button.append(readingLabel(reading), time);
+    item.append(button);
+    list.append(item);
   }
-  if (filtered.some(({ key }) => key === preferred)) historyPicker.value = preferred;
-  historyPicker.disabled = filtered.length === 0;
+  historyList.hidden = !filtered.length;
   element('history-controls').hidden = savedReadings.length === 0;
   status('history-status', filtered.length ? '' :
-    savedReadings.length ? 'No saved readings for this mode.' : 'No saved readings yet.');
+    savedReadings.length ? 'No saved readings match these filters.' : 'No saved readings yet.');
   showSavedReading();
 }
 
@@ -433,6 +564,7 @@ function persistReading(reading, statusId) {
     return false;
   }
   if (historyMode.value && historyMode.value !== reading.modeId) historyMode.value = '';
+  if (historyEcu.value && historyEcu.value !== reading.ecu) historyEcu.value = '';
   status(statusId, 'Saved on this device.', 'ready');
   loadHistory(key);
   return true;
@@ -445,10 +577,54 @@ saveButton.addEventListener('click', () => {
 });
 
 historyMode.addEventListener('change', () => renderHistory());
-historyPicker.addEventListener('change', showSavedReading);
+historyEcu.addEventListener('change', () => renderHistory());
+historyList.addEventListener('click', ({ target }) => {
+  const button = target.closest('button[data-reading]');
+  if (!button) return;
+  selectedHistoryKey = button.dataset.reading;
+  for (const item of historyList.querySelectorAll('button')) item.setAttribute('aria-current', String(item === button));
+  showSavedReading();
+  element('history-result-title').focus();
+});
+historyBaseline.addEventListener('change', showScanComparison);
+function downloadFile(file) {
+  if (!file) return;
+  const url = URL.createObjectURL(new Blob([file.contents], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = file.name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+element('history-download').addEventListener('click', () => {
+  const reading = savedReadings.find(({ key }) => key === selectedHistoryKey);
+  downloadFile(rawExchangeFile(reading));
+});
+element('history-copy').addEventListener('click', async () => {
+  const key = selectedHistoryKey;
+  const reading = savedReadings.find(item => item.key === key);
+  const replies = savedRawReplies(reading);
+  if (!replies.length) return;
+  const copyText = replies.join('\n');
+  try {
+    await navigator.clipboard.writeText(copyText);
+    if (selectedHistoryKey === key) status('history-copy-status', 'Raw replies copied.', 'ready');
+  } catch {
+    if (selectedHistoryKey !== key) return;
+    const fallback = element('history-raw-copy');
+    fallback.value = copyText;
+    fallback.hidden = false;
+    element('history-raw').open = true;
+    fallback.focus();
+    fallback.select();
+    status('history-copy-status', 'Use your device’s Copy action on the selected replies.');
+  }
+});
 window.addEventListener('storage', () => loadHistory());
 element('delete-reading').addEventListener('click', () => {
-  const key = historyPicker.value;
+  const key = selectedHistoryKey;
   if (!key || !window.confirm('Delete this saved reading?')) return;
   try {
     deleteReading(localStorage, key);
@@ -459,7 +635,7 @@ element('delete-reading').addEventListener('click', () => {
   loadHistory();
 });
 loadHistory();
-psaView = mountPsaView({ element, status, renderValues, runOperation, persistReading });
+psaView = mountPsaView({ element, status, renderValues, runOperation, persistReading, downloadFile, reportVehicleReply, renderReadTime });
 
 if (!canConnect) {
   status('connection-status', globalThis.isSecureContext ?

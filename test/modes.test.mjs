@@ -52,6 +52,40 @@ test('keeps confirmed IDs when a later range gets no reply', async () => {
   assert.match(result.note, /range \$20/);
 });
 
+test('reads only advertised identifiers once in a selected mode and retains separate failures', async () => {
+  const session = vehicle({
+    '0100': '41 00 08 30 00 01',
+    '0120': 'NO DATA',
+    '0105': '41 05 50',
+    '010B': 'NO DATA',
+    '010C': '41 0C 1F 40',
+  });
+  const progress = [];
+  const result = await readGeneralOBD(session, { modeId: '01', readAll: true },
+    (done, total) => progress.push([done, total]));
+  assert.deepEqual(result.supported, [5, 11, 12]);
+  assert.equal(result.successful, 2);
+  assert.deepEqual(result.rows.map(({ value }) => value), [
+    '40 °C', 'No response for this request. Support could not be confirmed.', '2000 rpm',
+  ]);
+  assert.match(result.note, /range \$20/);
+  assert.deepEqual(progress, [[1, 3], [2, 3], [3, 3]]);
+  assert.deepEqual(session.sent.filter((command) => !command.startsWith('AT')),
+    ['0100', '0120', '0105', '010B', '010C']);
+});
+
+test('batch reads preserve the selected freeze frame and reject informational modes', async () => {
+  const session = vehicle({ '020001': '42 00 01 40 00 00 00', '020201': '42 02 01 01 33' });
+  const result = await readGeneralOBD(session, { modeId: '02', extra: '01', readAll: true });
+  assert.deepEqual(result.rows, [{ label: '$02 · Trouble code that triggered the freeze frame', value: 'P0133' }]);
+  assert.deepEqual(session.sent.filter((command) => !command.startsWith('AT')), ['020001', '020201']);
+  const unused = vehicle({});
+  for (const modeId of ['04', '08']) {
+    await assert.rejects(readGeneralOBD(unused, { modeId, readAll: true }), /no read action/);
+  }
+  assert.deepEqual(unused.sent, []);
+});
+
 test('decodes readiness and reads the selected freeze-frame number', async () => {
   const session = vehicle({
     '0101': '41 01 81 29 41 40',
